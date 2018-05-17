@@ -67,6 +67,243 @@ struct timezone {
 #define	DST_EET		5	/* Eastern European dst */
 #define	DST_CAN		6	/* Canada */
 
+#if __BSD_VISIBLE
+struct bintime {
+	time_t	sec;
+	uint64_t frac;
+};
+
+static __inline void
+bintime_addx(struct bintime *_bt, uint64_t _x)
+{
+	uint64_t _u;
+
+	_u = _bt->frac;
+	_bt->frac += _x;
+	if (_u > _bt->frac)
+		_bt->sec++;
+}
+
+static __inline void
+bintime_add(struct bintime *_bt, const struct bintime *_bt2)
+{
+	uint64_t _u;
+
+	_u = _bt->frac;
+	_bt->frac += _bt2->frac;
+	if (_u > _bt->frac)
+		_bt->sec++;
+	_bt->sec += _bt2->sec;
+}
+
+static __inline void
+bintime_sub(struct bintime *_bt, const struct bintime *_bt2)
+{
+	uint64_t _u;
+
+	_u = _bt->frac;
+	_bt->frac -= _bt2->frac;
+	if (_u < _bt->frac)
+		_bt->sec--;
+	_bt->sec -= _bt2->sec;
+}
+
+static __inline void
+bintime_mul(struct bintime *_bt, u_int _x)
+{
+	uint64_t _p1, _p2;
+
+	_p1 = (_bt->frac & 0xffffffffull) * _x;
+	_p2 = (_bt->frac >> 32) * _x + (_p1 >> 32);
+	_bt->sec *= _x;
+	_bt->sec += (_p2 >> 32);
+	_bt->frac = (_p2 << 32) | (_p1 & 0xffffffffull);
+}
+
+static __inline void
+bintime_shift(struct bintime *_bt, int _exp)
+{
+
+	if (_exp > 0) {
+		_bt->sec <<= _exp;
+		_bt->sec |= _bt->frac >> (64 - _exp);
+		_bt->frac <<= _exp;
+	} else if (_exp < 0) {
+		_bt->frac >>= -_exp;
+		_bt->frac |= (uint64_t)_bt->sec << (64 + _exp);
+		_bt->sec >>= -_exp;
+	}
+}
+
+#define	bintime_clear(a)	((a)->sec = (a)->frac = 0)
+#define	bintime_isset(a)	((a)->sec || (a)->frac)
+#define	bintime_cmp(a, b, cmp)						\
+	(((a)->sec == (b)->sec) ?					\
+	    ((a)->frac cmp (b)->frac) :					\
+	    ((a)->sec cmp (b)->sec))
+
+#define	SBT_1S	((sbintime_t)1 << 32)
+#define	SBT_1M	(SBT_1S * 60)
+#define	SBT_1MS	(SBT_1S / 1000)
+#define	SBT_1US	(SBT_1S / 1000000)
+#define	SBT_1NS	(SBT_1S / 1000000000) /* beware rounding, see nstosbt() */
+#define	SBT_MAX	0x7fffffffffffffffLL
+
+static __inline int
+sbintime_getsec(sbintime_t _sbt)
+{
+
+	return (_sbt >> 32);
+}
+
+static __inline sbintime_t
+bttosbt(const struct bintime _bt)
+{
+
+	return (((sbintime_t)_bt.sec << 32) + (_bt.frac >> 32));
+}
+
+static __inline struct bintime
+sbttobt(sbintime_t _sbt)
+{
+	struct bintime _bt;
+
+	_bt.sec = _sbt >> 32;
+	_bt.frac = _sbt << 32;
+	return (_bt);
+}
+
+/*
+ * Decimal<->sbt conversions.  Multiplying or dividing by SBT_1NS results in
+ * large roundoff errors which sbttons() and nstosbt() avoid.  Millisecond and
+ * microsecond functions are also provided for completeness.
+ */
+static __inline int64_t
+sbttons(sbintime_t _sbt)
+{
+
+	return ((1000000000 * _sbt) >> 32);
+}
+
+static __inline sbintime_t
+nstosbt(int64_t _ns)
+{
+
+	return ((_ns * (((uint64_t)1 << 63) / 500000000)) >> 32);
+}
+
+static __inline int64_t
+sbttous(sbintime_t _sbt)
+{
+
+	return ((1000000 * _sbt) >> 32);
+}
+
+static __inline sbintime_t
+ustosbt(int64_t _us)
+{
+
+	return ((_us * (((uint64_t)1 << 63) / 500000)) >> 32);
+}
+
+static __inline int64_t
+sbttoms(sbintime_t _sbt)
+{
+
+	return ((1000 * _sbt) >> 32);
+}
+
+static __inline sbintime_t
+mstosbt(int64_t _ms)
+{
+
+	return ((_ms * (((uint64_t)1 << 63) / 500)) >> 32);
+}
+
+/*-
+ * Background information:
+ *
+ * When converting between timestamps on parallel timescales of differing
+ * resolutions it is historical and scientific practice to round down rather
+ * than doing 4/5 rounding.
+ *
+ *   The date changes at midnight, not at noon.
+ *
+ *   Even at 15:59:59.999999999 it's not four'o'clock.
+ *
+ *   time_second ticks after N.999999999 not after N.4999999999
+ */
+
+static __inline void
+bintime2timespec(const struct bintime *_bt, struct timespec *_ts)
+{
+
+	_ts->tv_sec = _bt->sec;
+	_ts->tv_nsec = ((uint64_t)1000000000 *
+	    (uint32_t)(_bt->frac >> 32)) >> 32;
+}
+
+static __inline void
+timespec2bintime(const struct timespec *_ts, struct bintime *_bt)
+{
+
+	_bt->sec = _ts->tv_sec;
+	/* 18446744073 = int(2^64 / 1000000000) */
+	_bt->frac = _ts->tv_nsec * (uint64_t)18446744073LL;
+}
+
+static __inline void
+bintime2timeval(const struct bintime *_bt, struct timeval *_tv)
+{
+
+	_tv->tv_sec = _bt->sec;
+	_tv->tv_usec = ((uint64_t)1000000 * (uint32_t)(_bt->frac >> 32)) >> 32;
+}
+
+static __inline void
+timeval2bintime(const struct timeval *_tv, struct bintime *_bt)
+{
+
+	_bt->sec = _tv->tv_sec;
+	/* 18446744073709 = int(2^64 / 1000000) */
+	_bt->frac = _tv->tv_usec * (uint64_t)18446744073709LL;
+}
+
+static __inline struct timespec
+sbttots(sbintime_t _sbt)
+{
+	struct timespec _ts;
+
+	_ts.tv_sec = _sbt >> 32;
+	_ts.tv_nsec = sbttons((uint32_t)_sbt);
+	return (_ts);
+}
+
+static __inline sbintime_t
+tstosbt(struct timespec _ts)
+{
+
+	return (((sbintime_t)_ts.tv_sec << 32) + nstosbt(_ts.tv_nsec));
+}
+
+static __inline struct timeval
+sbttotv(sbintime_t _sbt)
+{
+	struct timeval _tv;
+
+	_tv.tv_sec = _sbt >> 32;
+	_tv.tv_usec = sbttous((uint32_t)_sbt);
+	return (_tv);
+}
+
+static __inline sbintime_t
+tvtosbt(struct timeval _tv)
+{
+
+	return (((sbintime_t)_tv.tv_sec << 32) + ustosbt(_tv.tv_usec));
+}
+#endif /* __BSD_VISIBLE */
+
 #ifdef _KERNEL
 
 /* Operations on timespecs */
