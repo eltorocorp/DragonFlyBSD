@@ -2111,6 +2111,8 @@ device		gpio		# Enable support for the gpio framework
 device		ichwd		# Intel ICH watchdog interrupt timer
 device		tbridge		# regression testing
 
+device		ena
+
 #
 # Hyper-V support
 #
