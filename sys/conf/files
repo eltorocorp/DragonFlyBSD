@@ -2939,6 +2939,11 @@ bus/u4b/template/usb_template_serialnet.c optional usb_template
 bus/u4b/audio/uaudio.c			optional snd_uaudio
 bus/u4b/audio/uaudio_pcm.c		optional snd_uaudio
 
+dev/virtual/amazon/ena/ena.c		optional ena
+dev/virtual/amazon/ena/ena_sysctl.c 	optional ena
+dev/virtual/amazon/ena/ena-com/ena_com.c optional ena
+dev/virtual/amazon/ena/ena-com/ena_eth_com.c optional ena
+
 #
 # Hyper-V support
 #
