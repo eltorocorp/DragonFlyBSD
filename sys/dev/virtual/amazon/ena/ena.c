@@ -832,7 +832,7 @@ ena_setup_rx_resources(struct ena_adapter *adapter, unsigned int qid)
 	}
 
 	/* Create LRO for the ring */
-	if ((adapter->ifp->if_capenable & IFCAP_LRO) != 0) {
+	/*if ((adapter->ifp->if_capenable & IFCAP_LRO) != 0) {
 		int err = tcp_lro_init(&rx_ring->lro);
 		if (err != 0) {
 			device_printf(adapter->pdev,
@@ -842,7 +842,7 @@ ena_setup_rx_resources(struct ena_adapter *adapter, unsigned int qid)
 			    "RX Soft LRO[%d] Initialized\n", qid);
 			rx_ring->lro.ifp = adapter->ifp;
 		}
-	}
+	}*/
 
 	/* Allocate taskqueues */
 	TASK_INIT(&rx_ring->cmpl_task, 0, ena_deferred_rx_cleanup, rx_ring);
@@ -903,7 +903,7 @@ ena_free_rx_resources(struct ena_adapter *adapter, unsigned int qid)
 	}
 
 	/* free LRO resources, */
-	tcp_lro_free(&rx_ring->lro);
+	//tcp_lro_free(&rx_ring->lro);
 
 	/* free allocated memory */
 	kfree(rx_ring->rx_buffer_info, M_DEVBUF);
@@ -1722,19 +1722,17 @@ ena_rx_cleanup(struct ena_ring *rx_ring)
 		 * should be computed by hardware.
 		 */
 		do_if_input = 1;
-		if (((ifp->if_capenable & IFCAP_LRO) != 0)  &&
+		/*if (((ifp->if_capenable & IFCAP_LRO) != 0)  &&
 		    ((mbuf->m_pkthdr.csum_flags & CSUM_IP_VALID) != 0) &&
 		    (ena_rx_ctx.l4_proto == ENA_ETH_IO_L4_PROTO_TCP)) {
-			/*
-			 * Send to the stack if:
-			 *  - LRO not enabled, or
-			 *  - no LRO resources, or
-			 *  - lro enqueue fails
-			 */
+			 // Send to the stack if:
+			 //  - LRO not enabled, or
+			 // - no LRO resources, or
+			 // - lro enqueue fails
 			if ((rx_ring->lro.lro_cnt != 0) &&
 			    (tcp_lro_rx(&rx_ring->lro, mbuf, 0) == 0))
 					do_if_input = 0;
-		}
+		}*/
 		if (do_if_input != 0) {
 			ena_trace(ENA_DBG | ENA_RXPTH,
 			    "calling if_input() with mbuf %p", mbuf);
@@ -1759,7 +1757,7 @@ ena_rx_cleanup(struct ena_ring *rx_ring)
 		ena_refill_rx_bufs(rx_ring, refill_required);
 	}
 
-	tcp_lro_flush_all(&rx_ring->lro);
+	//tcp_lro_flush_all(&rx_ring->lro);
 
 	return (RX_BUDGET - budget);
 
@@ -2910,7 +2908,7 @@ ena_start_xmit(struct ena_ring *tx_ring)
 		return;
 
 	if (unlikely(!adapter->link_status))
-		return;
+		return
 
 	ena_qid = ENA_IO_TXQ_IDX(tx_ring->que->id);
 	io_sq = &adapter->ena_dev->io_sq_queues[ena_qid];
