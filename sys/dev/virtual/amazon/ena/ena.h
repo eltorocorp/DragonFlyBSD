@@ -252,7 +252,7 @@ struct ena_ring {
 	enum ena_intr_moder_level moder_tbl_idx;
 
 	struct ena_que *que;
-	struct lro_ctrl lro;
+	//struct lro_ctrl lro;
 
 	uint16_t next_to_use;
 	uint16_t next_to_clean;
