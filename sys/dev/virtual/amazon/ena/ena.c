@@ -491,7 +491,7 @@ ena_free_io_ring_resources(struct ena_adapter *adapter, unsigned int qid)
 #endif
 
 	ENA_RING_MTX_LOCK(txr);
-	drbr_free(txr->br, M_DEVBUF);
+	buf_ring_free(txr->br, M_DEVBUF);
 	ENA_RING_MTX_UNLOCK(txr);
 
 	lockuninit(&txr->ring_lock);
@@ -615,8 +615,8 @@ ena_setup_tx_resources(struct ena_adapter *adapter, int qid)
 	tx_ring->next_to_use = 0;
 	tx_ring->next_to_clean = 0;
 
-	/* Make sure that drbr is empty */
 	ENA_RING_MTX_LOCK(tx_ring);
+	//TODO: drbr_flush will need to be rewritten
 	drbr_flush(adapter->ifp, tx_ring->br);
 	ENA_RING_MTX_UNLOCK(tx_ring);
 
@@ -689,6 +689,7 @@ ena_free_tx_resources(struct ena_adapter *adapter, int qid)
 
 	ENA_RING_MTX_LOCK(tx_ring);
 	/* Flush buffer ring, */
+	//TODO: drbr_flush is going to need to be rewritten in buf_ring.h
 	drbr_flush(adapter->ifp, tx_ring->br);
 
 	/* Free buffer DMA maps, */
@@ -2908,7 +2909,7 @@ ena_start_xmit(struct ena_ring *tx_ring)
 	ena_qid = ENA_IO_TXQ_IDX(tx_ring->que->id);
 	io_sq = &adapter->ena_dev->io_sq_queues[ena_qid];
 
-	while ((mbuf = drbr_peek(adapter->ifp, tx_ring->br)) != NULL) {
+	while ((mbuf = buf_ring_peek_clear_sc(tx_ring->br)) != NULL) {
 		ena_trace(ENA_DBG | ENA_TXPTH, "\ndequeued mbuf %p with flags %#x and"
 		    " header csum flags %#jx",
 		    mbuf, mbuf->m_flags, (uint64_t)mbuf->m_pkthdr.csum_flags);
@@ -2919,18 +2920,18 @@ ena_start_xmit(struct ena_ring *tx_ring)
 
 		if (unlikely((ret = ena_xmit_mbuf(tx_ring, &mbuf)) != 0)) {
 			if (ret == ENA_COM_NO_MEM) {
-				drbr_putback(adapter->ifp, tx_ring->br, mbuf);
+				buf_ring_putback_sc(tx_ring->br, mbuf);
 			} else if (ret == ENA_COM_NO_SPACE) {
-				drbr_putback(adapter->ifp, tx_ring->br, mbuf);
+				buf_ring_putback_sc(tx_ring->br, mbuf);
 			} else {
 				m_freem(mbuf);
-				drbr_advance(adapter->ifp, tx_ring->br);
+				buf_ring_advance_sc(tx_ring->br);
 			}
 
 			break;
 		}
 
-		drbr_advance(adapter->ifp, tx_ring->br);
+		buf_ring_advance_sc(tx_ring->br);
 
 		if (unlikely((adapter->ifp->if_flags & IFF_RUNNING) == 0))
 			return;
@@ -2970,7 +2971,9 @@ ena_deferred_mq_start(void *arg, int pending)
 	struct ena_ring *tx_ring = (struct ena_ring *)arg;
 	struct ifnet *ifp = tx_ring->adapter->ifp;
 
-	while (!drbr_empty(ifp, tx_ring->br) &&
+	// TODO: Use of buf_ring
+
+	while (!buf_ring_empty(tx_ring->br) &&
 	    (ifp->if_flags & IFF_RUNNING) != 0) {
 		ENA_RING_MTX_LOCK(tx_ring);
 		ena_start_xmit(tx_ring);
@@ -3012,7 +3015,8 @@ ena_mq_start(if_t ifp, struct mbuf *m)
 	tx_ring = &adapter->tx_ring[i];
 
 	/* Check if drbr is empty before putting packet */
-	is_drbr_empty = drbr_empty(ifp, tx_ring->br);
+	is_drbr_empty = buf_ring_empty(tx_ring->br);
+	//TODO: enqueue might have to be reworked
 	ret = drbr_enqueue(ifp, tx_ring->br, m);
 	if (unlikely(ret != 0)) {
 		taskqueue_enqueue(tx_ring->enqueue_tq, &tx_ring->enqueue_task);
@@ -3037,8 +3041,9 @@ ena_qflush(if_t ifp)
 	int i;
 
 	for(i = 0; i < adapter->num_queues; ++i, ++tx_ring)
-		if (!drbr_empty(ifp, tx_ring->br)) {
+		if (!buf_ring_empty(tx_ring->br)) {
 			ENA_RING_MTX_LOCK(tx_ring);
+			//TODO: flush needs to be reworked
 			drbr_flush(ifp, tx_ring->br);
 			ENA_RING_MTX_UNLOCK(tx_ring);
 		}
