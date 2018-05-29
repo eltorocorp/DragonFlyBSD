@@ -2909,6 +2909,8 @@ ena_start_xmit(struct ena_ring *tx_ring)
 	ena_qid = ENA_IO_TXQ_IDX(tx_ring->que->id);
 	io_sq = &adapter->ena_dev->io_sq_queues[ena_qid];
 
+	// TODO: Clear out use of buf_ring (br)
+
 	while ((mbuf = buf_ring_peek_clear_sc(tx_ring->br)) != NULL) {
 		ena_trace(ENA_DBG | ENA_TXPTH, "\ndequeued mbuf %p with flags %#x and"
 		    " header csum flags %#jx",
