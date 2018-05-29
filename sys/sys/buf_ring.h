@@ -85,7 +85,7 @@ buf_ring_enqueue(struct buf_ring *br, void *buf)
 		cons_tail = br->br_cons_tail;
 
 		if (prod_next == cons_tail) {
-			rmb();
+			cpu_lfence();
 			if (prod_head == br->br_prod_head &&
 			    cons_tail == br->br_cons_tail) {
 				br->br_drops++;
