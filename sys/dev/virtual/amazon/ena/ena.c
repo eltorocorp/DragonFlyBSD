@@ -621,7 +621,7 @@ ena_setup_tx_resources(struct ena_adapter *adapter, int qid)
 
 	ENA_RING_MTX_LOCK(tx_ring);
 	//TODO: drbr_flush will need to be rewritten
-	drbr_flush(adapter->ifp, tx_ring->br);
+	buf_ring_flush(tx_ring->br);
 	ENA_RING_MTX_UNLOCK(tx_ring);
 
 	/* ... and create the buffer DMA maps */
@@ -693,8 +693,7 @@ ena_free_tx_resources(struct ena_adapter *adapter, int qid)
 
 	ENA_RING_MTX_LOCK(tx_ring);
 	/* Flush buffer ring, */
-	//TODO: drbr_flush is going to need to be rewritten in buf_ring.h
-	drbr_flush(adapter->ifp, tx_ring->br);
+	buf_ring_flush(tx_ring->br);
 
 	/* Free buffer DMA maps, */
 	for (int i = 0; i < tx_ring->ring_size; i++) {
@@ -3023,7 +3022,7 @@ ena_mq_start(if_t ifp, struct mbuf *m)
 	/* Check if drbr is empty before putting packet */
 	is_drbr_empty = buf_ring_empty(tx_ring->br);
 	//TODO: enqueue might have to be reworked
-	ret = drbr_enqueue(ifp, tx_ring->br, m);
+	ret = buf_ring_enqueue_manager(tx_ring->br, m);
 	if (unlikely(ret != 0)) {
 		taskqueue_enqueue(tx_ring->enqueue_tq, &tx_ring->enqueue_task);
 		return (ret);
@@ -3051,7 +3050,7 @@ ena_qflush(if_t ifp)
 		if (!buf_ring_empty(tx_ring->br)) {
 			ENA_RING_MTX_LOCK(tx_ring);
 			//TODO: flush needs to be reworked
-			drbr_flush(ifp, tx_ring->br);
+			buf_ring_flush(tx_ring->br);
 			ENA_RING_MTX_UNLOCK(tx_ring);
 		}
 
