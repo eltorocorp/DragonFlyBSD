@@ -38,6 +38,7 @@
 #include <sys/kthread.h>
 #include <sys/malloc.h>
 #include <sys/mbuf.h>
+#include <sys/buf_ring.h>
 #include <sys/module.h>
 #include <sys/rman.h>
 #include <sys/socket.h>
