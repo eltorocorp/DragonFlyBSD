@@ -332,6 +332,25 @@ buf_ring_peek_clear_sc(struct buf_ring *br)
 #endif
 }
 
+static __inline void
+buf_ring_flush(struct buf_ring *br) {
+	struct mbuf *m;
+
+	while ((m = buf_ring_dequeue_sc(br)) != NULL)
+		m_freem(m);
+}
+
+static __inline int
+buf_ring_enqueue_manager(struct buf_ring *br, struct mbuf *m) {
+	int error = 0;
+
+	error = buf_ring_enqueue(br, m);
+	if (error)
+		m_freem(m);
+
+	return (error);
+}
+
 static __inline int
 buf_ring_full(struct buf_ring *br)
 {
