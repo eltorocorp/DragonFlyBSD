@@ -1919,7 +1919,7 @@ ena_setup_mgmnt_intr(struct ena_adapter *adapter)
 static void
 ena_setup_io_intr(struct ena_adapter *adapter)
 {
-	static int last_bind_cpu = -1;
+	//static int last_bind_cpu = -1;
 	int irq_idx;
 
 	for (int i = 0; i < adapter->num_queues; i++) {
