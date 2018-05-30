@@ -2763,8 +2763,7 @@ ena_check_and_collapse_mbuf(struct ena_ring *tx_ring, struct mbuf **mbuf)
 	counter_u64_add(tx_ring->tx_stats.collapse, 1);
 #endif
 
-	collapsed_mbuf = m_collapse(*mbuf, M_NOWAIT,
-	    adapter->max_tx_sgl_size - 1);
+	collapsed_mbuf = m_defrag(*mbuf, M_NOWAIT);
 	if (unlikely(collapsed_mbuf == NULL)) {
 #if 0 /* XXX swildner counters */
 		counter_u64_add(tx_ring->tx_stats.collapse_err, 1);
