@@ -1936,12 +1936,18 @@ ena_setup_io_intr(struct ena_adapter *adapter)
 		/*
 		 * We still want to bind rings to the corresponding cpu
 		 * using something similar to the RSS round-robin technique.
+		 *
+		 * It seems that this can be removed since Dfly has native support for RSS
+		 * Dfly also does not have support for CPU_FIRST or CPU_NEXT
 		 */
+
+		/*
 		if (unlikely(last_bind_cpu < 0))
 			last_bind_cpu = CPU_FIRST();
 		adapter->que[i].cpu = adapter->irq_tbl[irq_idx].cpu =
 		    last_bind_cpu;
 		last_bind_cpu = CPU_NEXT(last_bind_cpu);
+		*/
 #endif
 	}
 }
