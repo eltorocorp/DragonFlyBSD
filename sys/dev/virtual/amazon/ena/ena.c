@@ -1703,8 +1703,8 @@ ena_rx_cleanup(struct ena_ring *rx_ring)
 			break;
 		}
 
-		if (((ifp->if_capenable & IFCAP_RXCSUM) != 0) ||
-		    ((ifp->if_capenable & IFCAP_RXCSUM_IPV6) != 0)) {
+		//Removed IFCAP_RXCSUM_IPV6 check because Dfly does not seem to suppor it
+		if ((ifp->if_capenable & IFCAP_RXCSUM) != 0) {
 			ena_rx_checksum(rx_ring, &ena_rx_ctx, mbuf);
 		}
 
@@ -1870,6 +1870,8 @@ ena_enable_msix(struct ena_adapter *adapter)
 	}
 
 	msix_req = msix_vecs;
+	//TODO: Might have to change msix_vecs to a u_int
+	//TODO: pci_alloc_msix_vector takes in an rid & cpuid as params
 	rc = pci_alloc_msix(dev, &msix_vecs);
 	if (unlikely(rc != 0)) {
 		device_printf(dev,
@@ -2504,10 +2506,11 @@ ena_get_dev_offloads(struct ena_com_dev_get_features_ctx *feat)
 	    ENA_ADMIN_FEATURE_OFFLOAD_DESC_RX_L3_CSUM_IPV4_MASK)) != 0)
 		caps |= IFCAP_RXCSUM;
 
-	if ((feat->offload.rx_supported &
+	/*if ((feat->offload.rx_supported &
 	    ENA_ADMIN_FEATURE_OFFLOAD_DESC_RX_L4_IPV6_CSUM_MASK) != 0)
-		caps |= IFCAP_RXCSUM_IPV6;
-
+		    caps |= IFCAP_RXCSUM_IPV6;
+	*/
+	
 	caps |= IFCAP_LRO | IFCAP_JUMBO_MTU;
 
 	return (caps);
