@@ -1429,9 +1429,12 @@ ena_rx_hash_mbuf(struct ena_ring *rx_ring, struct ena_com_rx_ctx *ena_rx_ctx,
 	struct ena_adapter *adapter = rx_ring->adapter;
 
 	if (likely(adapter->rss_support)) {
-		mbuf->m_pkthdr.flowid = ena_rx_ctx->hash;
+		//mbuf->m_pkthdr.flowid = ena_rx_ctx->hash;
+		m_sethash(mbuf, ena_rx_ctx->hash);
 
-		if (ena_rx_ctx->frag &&
+		//rsstype doesn't seem to be needed by the network stack, we will only supply the hash.
+
+		/*if (ena_rx_ctx->frag &&
 		    (ena_rx_ctx->l3_proto != ENA_ETH_IO_L3_PROTO_UNKNOWN)) {
 			M_HASHTYPE_SET(mbuf, M_HASHTYPE_OPAQUE_HASH);
 			return;
@@ -1467,10 +1470,11 @@ ena_rx_hash_mbuf(struct ena_ring *rx_ring, struct ena_com_rx_ctx *ena_rx_ctx,
 			break;
 		default:
 			M_HASHTYPE_SET(mbuf, M_HASHTYPE_OPAQUE_HASH);
-		}
+		}*/
 	} else {
-		mbuf->m_pkthdr.flowid = rx_ring->qid;
-		M_HASHTYPE_SET(mbuf, M_HASHTYPE_NONE);
+		//mbuf->m_pkthdr.flowid = rx_ring->qid;
+		//M_HASHTYPE_SET(mbuf, M_HASHTYPE_NONE);
+		m_sethash(mbuf, rx_ring->qid);
 	}
 }
 
@@ -3007,17 +3011,10 @@ ena_mq_start(if_t ifp, struct mbuf *m)
 	 * same bucket that the current CPU we're on is.
 	 * It should improve performance.
 	 */
-	if (M_HASHTYPE_GET(m) != M_HASHTYPE_NONE) {
-#ifdef	RSS
-		if (rss_hash2bucket(m->m_pkthdr.flowid,
-		    M_HASHTYPE_GET(m), &i) == 0) {
-			i = i % adapter->num_queues;
-
-		} else
-#endif
-		{
-			i = m->m_pkthdr.flowid % adapter->num_queues;
-		}
+	//if (M_HASHTYPE_GET(m) != M_HASHTYPE_NONE) {
+	if (m->m_pkthdr.hash != 0) {
+		//i = m->m_pkthdr.flowid % adapter->num_queues;
+		i = m->m_pkthdr.hash % adapter->num_queues;
 	} else {
 		i = curcpu % adapter->num_queues;
 	}
