@@ -2501,7 +2501,7 @@ ena_get_dev_offloads(struct ena_com_dev_get_features_ctx *feat)
 	if ((feat->offload.tx &
 	    (ENA_ADMIN_FEATURE_OFFLOAD_DESC_TX_L4_IPV6_CSUM_FULL_MASK |
 	    ENA_ADMIN_FEATURE_OFFLOAD_DESC_TX_L4_IPV6_CSUM_PART_MASK)) != 0)
-		caps |= IFCAP_TXCSUM_IPV6;
+		caps |= IFCAP_TXCSUM;
 
 	if ((feat->offload.tx &
 	    ENA_ADMIN_FEATURE_OFFLOAD_DESC_TSO_IPV4_MASK) != 0)
@@ -2521,7 +2521,7 @@ ena_get_dev_offloads(struct ena_com_dev_get_features_ctx *feat)
 		    caps |= IFCAP_RXCSUM_IPV6;
 	*/
 	
-	caps |= IFCAP_LRO | IFCAP_JUMBO_MTU;
+	caps |= IFCAP_JUMBO_MTU;
 
 	return (caps);
 }
@@ -2551,17 +2551,14 @@ ena_update_hwassist(struct ena_adapter *adapter)
 		if ((feat &
 		    (ENA_ADMIN_FEATURE_OFFLOAD_DESC_TX_L4_IPV4_CSUM_FULL_MASK |
 		    ENA_ADMIN_FEATURE_OFFLOAD_DESC_TX_L4_IPV4_CSUM_PART_MASK)) != 0)
-			flags |= CSUM_IP_UDP | CSUM_IP_TCP;
+			flags |= CSUM_UDP | CSUM_TCP;
 	}
 
-	if ((cap & IFCAP_TXCSUM_IPV6) != 0)
-		flags |= CSUM_IP6_UDP | CSUM_IP6_TCP;
+	//if ((cap & IFCAP_TXCSUM_IPV6) != 0)
+	//	flags |= CSUM_IP6_UDP | CSUM_IP6_TCP;
 
-	if ((cap & IFCAP_TSO4) != 0)
-		flags |= CSUM_IP_TSO;
-
-	if ((cap & IFCAP_TSO6) != 0)
-		flags |= CSUM_IP6_TSO;
+	if ((cap & IFCAP_TSO4) != 0 || (cap & IFCAP_TSO6) != 0)
+		flags |= CSUM_TSO;
 
 	ifp->if_hwassist |= flags;
 }
@@ -2601,13 +2598,15 @@ ena_setup_ifnet(device_t pdev, struct ena_adapter *adapter,
 	/* check hardware support */
 	caps = ena_get_dev_offloads(feat);
 	/* ... and set them */
-	if_setcapabilitiesbit(ifp, caps, 0);
+	//if_setcapabilitiesbit(ifp, caps, 0);
+	((struct ifnet *)ifp)->if_capabilities |= caps;
+	((struct ifnet *)ifp)->if_capabilities &= ~0;
 
 	/* TSO parameters */
-	ifp->if_hw_tsomax = ENA_TSO_MAXSIZE -
-	    (ETHER_HDR_LEN + ETHER_VLAN_ENCAP_LEN);
-	ifp->if_hw_tsomaxsegcount = adapter->max_tx_sgl_size - 1;
-	ifp->if_hw_tsomaxsegsize = ENA_TSO_MAXSIZE;
+	//ifp->if_hw_tsomax = ENA_TSO_MAXSIZE -
+	//    (ETHER_HDR_LEN + ETHER_VLAN_ENCAP_LEN);
+	ifp->if_tsolen = adapter->max_tx_sgl_size - 1;
+	//ifp->if_hw_tsomaxsegsize = ENA_TSO_MAXSIZE;
 
 	ifp->if_hdrlen = sizeof(struct ether_vlan_header);
 	ifp->if_capenable= ifp->if_capabilities;
@@ -2732,14 +2731,14 @@ ena_tx_csum(struct ena_com_tx_ctx *ena_tx_ctx, struct mbuf *mbuf)
 	if (ip->ip_p == IPPROTO_TCP) {
 		ena_tx_ctx->l4_proto = ENA_ETH_IO_L4_PROTO_TCP;
 		if ((mbuf->m_pkthdr.csum_flags &
-		    (CSUM_IP_TCP | CSUM_IP6_TCP)) != 0)
+		    CSUM_TCP) != 0)
 			ena_tx_ctx->l4_csum_enable = 1;
 		else
 			ena_tx_ctx->l4_csum_enable = 0;
 	} else if (ip->ip_p == IPPROTO_UDP) {
 		ena_tx_ctx->l4_proto = ENA_ETH_IO_L4_PROTO_UDP;
 		if ((mbuf->m_pkthdr.csum_flags &
-		    (CSUM_IP_UDP | CSUM_IP6_UDP)) != 0)
+		    CSUM_UDP) != 0)
 			ena_tx_ctx->l4_csum_enable = 1;
 		else
 			ena_tx_ctx->l4_csum_enable = 0;
