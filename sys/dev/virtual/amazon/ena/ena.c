@@ -3881,7 +3881,7 @@ ena_detach(device_t pdev)
 	int rc;
 
 	/* Make sure VLANS are not using driver */
-	if (adapter->ifp->if_vlantrunk != NULL) {
+	if (adapter->ifp->if_vlantrunks != NULL) {
 		device_printf(adapter->pdev ,"VLAN is in use, detach first\n");
 		return (EBUSY);
 	}
