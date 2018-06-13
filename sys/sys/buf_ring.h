@@ -374,7 +374,7 @@ buf_ring_count(struct buf_ring *br)
 }
 
 struct buf_ring *buf_ring_alloc(int count, struct malloc_type *type, int flags,
-    struct mtx *);
+    struct lock *);
 void buf_ring_free(struct buf_ring *br, struct malloc_type *type);
 
 
