@@ -1852,8 +1852,8 @@ static int
 ena_enable_msix(struct ena_adapter *adapter)
 {
 	device_t dev = adapter->pdev;
-	int msix_vecs, msix_req;
-	int i, rc = 0;
+	int msix_vecs;
+	int error, i, rc = 0;
 
 	/* Reserved the max msix vectors we might need */
 	msix_vecs = ENA_MAX_MSIX_VEC(adapter->num_queues);
@@ -1869,22 +1869,10 @@ ena_enable_msix(struct ena_adapter *adapter)
 		adapter->msix_entries[i].vector = i + 1;
 	}
 
-	msix_req = msix_vecs;
-	//TODO: Might have to change msix_vecs to a u_int
-	//TODO: pci_alloc_msix_vector takes in an rid & cpuid as params
-	rc = pci_alloc_msix(dev, &msix_vecs);
-	if (unlikely(rc != 0)) {
-		device_printf(dev,
-		    "Failed to enable MSIX, vectors %d rc %d\n", msix_vecs, rc);
-
-		rc = ENOSPC;
+	error = pci_setup_msix(dev);
+	if (error) {
+		device_printf(dev, "Setup MSI-x failed\n");
 		goto err_msix_free;
-	}
-
-	if (msix_vecs != msix_req) {
-		device_printf(dev, "Enable only %d MSI-x (out of %d), reduce "
-		    "the number of queues\n", msix_vecs, msix_req);
-		adapter->num_queues = msix_vecs - ENA_ADMIN_MSIX_VEC;
 	}
 
 	adapter->msix_vecs = msix_vecs;
@@ -1919,7 +1907,7 @@ ena_setup_mgmnt_intr(struct ena_adapter *adapter)
 static void
 ena_setup_io_intr(struct ena_adapter *adapter)
 {
-	//static int last_bind_cpu = -1;
+	static int last_bind_cpu = -1;
 	int irq_idx;
 
 	for (int i = 0; i < adapter->num_queues; i++) {
@@ -1945,13 +1933,11 @@ ena_setup_io_intr(struct ena_adapter *adapter)
 		 * Dfly also does not have support for CPU_FIRST or CPU_NEXT
 		 */
 
-		/*
-		if (unlikely(last_bind_cpu < 0))
-			last_bind_cpu = CPU_FIRST();
+		if (last_bind_cpu < 0)
+			last_bind_cpu = (last_bind_cpu + 1) % ncpus;
 		adapter->que[i].cpu = adapter->irq_tbl[irq_idx].cpu =
 		    last_bind_cpu;
-		last_bind_cpu = CPU_NEXT(last_bind_cpu);
-		*/
+		last_bind_cpu = (last_bind_cpu + 1) % ncpus;
 #endif
 	}
 }
@@ -1961,11 +1947,18 @@ ena_request_mgmnt_irq(struct ena_adapter *adapter)
 {
 	struct ena_irq *irq;
 	unsigned long flags;
-	int rc, rcc;
+	int error, rc, rcc;
 
 	flags = RF_ACTIVE | RF_SHAREABLE;
 
 	irq = &adapter->irq_tbl[ENA_MGMNT_IRQ_IDX];
+
+	error = pci_alloc_msix_vector(adapter->pdev, 0, &irq->vector, 0);
+	if (error) {
+		device_printf(adapter->pdev, "Could not initialize MGMNT MSI-X Vector on cpu0\n");
+		goto err_res_free;
+	}
+
 	irq->res = bus_alloc_resource_any(adapter->pdev, SYS_RES_IRQ,
 	    &irq->vector, flags);
 
@@ -2014,7 +2007,7 @@ ena_request_io_irq(struct ena_adapter *adapter)
 {
 	struct ena_irq *irq;
 	unsigned long flags = 0;
-	int rc = 0, i, rcc;
+	int rc = 0, i, rcc, error;
 
 	if (unlikely(adapter->msix_enabled == 0)) {
 		device_printf(adapter->pdev,
@@ -2024,11 +2017,17 @@ ena_request_io_irq(struct ena_adapter *adapter)
 		flags = RF_ACTIVE | RF_SHAREABLE;
 	}
 
-	for (i = ENA_IO_IRQ_FIRST_IDX; i < adapter->msix_vecs; i++) {
+	for (i = ENA_IO_IRQ_FIRST_IDX; i < adapter->msix_vecs; ++i) {
 		irq = &adapter->irq_tbl[i];
 
 		if (unlikely(irq->requested))
 			continue;
+
+		error = pci_alloc_msix_vector(adapter->pdev, i, &irq->vector, irq->cpu);
+		if (error) {
+			device_printf(adapter->pdev, "Unable to allocated MSI-X %d on cpu%d\n", i, irq->cpu);
+			goto err;
+		}
 
 		irq->res = bus_alloc_resource_any(adapter->pdev, SYS_RES_IRQ,
 		    &irq->vector, flags);
@@ -2038,6 +2037,8 @@ ena_request_io_irq(struct ena_adapter *adapter)
 			goto err;
 		}
 
+
+		//TODO: Might need to setup desc and use irq->name as the value
 		rc = bus_setup_intr(adapter->pdev, irq->res,
 		    INTR_MPSAFE,
 		    irq->handler, irq->data, &irq->cookie, NULL);
@@ -3349,6 +3350,8 @@ static int ena_enable_msix_and_set_admin_interrupts(struct ena_adapter *adapter,
 		device_printf(adapter->pdev, "Cannot setup mgmnt queue intr\n");
 		goto err_disable_msix;
 	}
+
+	pci_enable_msix(adapter->pdev);
 
 	ena_com_set_admin_polling_mode(ena_dev, false);
 
