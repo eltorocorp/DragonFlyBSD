@@ -2585,8 +2585,8 @@ ena_setup_ifnet(device_t pdev, struct ena_adapter *adapter,
 	if_setgetcounterfn(ifp, ena_get_counter);
 #endif
 
-	if_setsendqlen(ifp, adapter->tx_ring_size);
-	if_setsendqready(ifp);
+	ifq_set_maxlen(&ifp->if_snd, adapter->tx_ring_size);
+	ifq_set_ready(&ifp->if_snd);
 	ifp->if_mtu = ETHERMTU;
 	ifp->if_baudrate = 0;
 	/* Zeroize capabilities... */
