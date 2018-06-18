@@ -34,6 +34,7 @@
 #define ENA_H
 
 #include <sys/types.h>
+#include <sys/_timeval.h>
 
 #include "ena-com/ena_com.h"
 #include "ena-com/ena_eth_com.h"
@@ -185,7 +186,7 @@ struct ena_tx_buffer {
 	bus_dmamap_t map;
 
 	/* Used to detect missing tx packets */
-	struct bintime timestamp;
+	struct timeval timestamp;
 	bool print_once;
 
 	struct ena_com_buf bufs[ENA_PKT_MAX_BUFS];
@@ -379,13 +380,13 @@ struct ena_adapter {
 
 	/* Timer service */
 	struct callout timer_service;
-	sbintime_t keep_alive_timestamp;
+	struct timeval keep_alive_timestamp;
 	uint32_t next_monitored_tx_qid;
 	struct task reset_task;
 	struct taskqueue *reset_tq;
 	int wd_active;
-	sbintime_t keep_alive_timeout;
-	sbintime_t missing_tx_timeout;
+	time_t keep_alive_timeout;
+	time_t missing_tx_timeout;
 	uint32_t missing_tx_max_queues;
 	uint32_t missing_tx_threshold;
 
