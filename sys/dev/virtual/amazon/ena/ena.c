@@ -1378,7 +1378,7 @@ ena_tx_cleanup(struct ena_ring *tx_ring)
 		mbuf = tx_info->mbuf;
 
 		tx_info->mbuf = NULL;
-		bintime_clear(&tx_info->timestamp);
+		timevalclear(&tx_info->timestamp);
 
 		if (likely(tx_info->num_of_bufs != 0)) {
 			/* Map is no longer required */
@@ -2887,7 +2887,7 @@ ena_xmit_mbuf(struct ena_ring *tx_ring, struct mbuf **mbuf)
 #endif
 
 	tx_info->tx_descs = nb_hw_desc;
-	getbinuptime(&tx_info->timestamp);
+	getmicrouptime(&tx_info->timestamp);
 	tx_info->print_once = true;
 
 	tx_ring->next_to_use = ENA_TX_RING_IDX_NEXT(next_to_use,
@@ -3376,7 +3376,7 @@ static void ena_keep_alive_wd(void *adapter_data,
 {
 	struct ena_adapter *adapter = (struct ena_adapter *)adapter_data;
 	struct ena_admin_aenq_keep_alive_desc *desc;
-	sbintime_t stime;
+	struct timeval time;
 	uint64_t rx_drops;
 
 	desc = (struct ena_admin_aenq_keep_alive_desc *)aenq_e;
@@ -3387,14 +3387,14 @@ static void ena_keep_alive_wd(void *adapter_data,
 	counter_u64_add(adapter->hw_stats.rx_drops, rx_drops);
 #endif
 
-	stime = getsbinuptime();
-	atomic_store_rel_64(&adapter->keep_alive_timestamp, stime);
+	getmicrouptime(&time);
+	atomic_store_rel_64(&adapter->keep_alive_timestamp.tv_sec, time.tv_sec);
 }
 
 /* Check for keep alive expiration */
 static void check_for_missing_keep_alive(struct ena_adapter *adapter)
 {
-	sbintime_t timestamp, time;
+	struct timeval timestamp, time;
 
 	if (adapter->wd_active == 0)
 		return;
@@ -3402,9 +3402,10 @@ static void check_for_missing_keep_alive(struct ena_adapter *adapter)
 	if (likely(adapter->keep_alive_timeout == 0))
 		return;
 
-	timestamp = atomic_load_acq_64(&adapter->keep_alive_timestamp);
-	time = getsbinuptime() - timestamp;
-	if (unlikely(time > adapter->keep_alive_timeout)) {
+	timestamp.tv_sec = atomic_load_acq_64(&adapter->keep_alive_timestamp.tv_sec);
+	getmicrouptime(&time);
+	timevalsub(&time, &timestamp);
+	if (unlikely(time.tv_sec > adapter->keep_alive_timeout)) {
 		device_printf(adapter->pdev,
 		    "Keep alive watchdog timeout.\n");
 #if 0 /* XXX swildner counters */
@@ -3434,24 +3435,25 @@ static int
 check_missing_comp_in_queue(struct ena_adapter *adapter,
     struct ena_ring *tx_ring)
 {
-	struct bintime curtime, time;
+	struct timeval curtime, time;
 	struct ena_tx_buffer *tx_buf;
 	uint32_t missed_tx = 0;
 	int i;
 
-	getbinuptime(&curtime);
+	getmicrouptime(&curtime);
 
 	for (i = 0; i < tx_ring->ring_size; i++) {
 		tx_buf = &tx_ring->tx_buffer_info[i];
 
-		if (bintime_isset(&tx_buf->timestamp) == 0)
+		if (timevalisset(&tx_buf->timestamp) == 0)
 			continue;
 
 		time = curtime;
-		bintime_sub(&time, &tx_buf->timestamp);
+		timevalsub(&time, &tx_buf->timestamp);
 
 		/* Check again if packet is still waiting */
-		if (unlikely(bttosbt(time) > adapter->missing_tx_timeout)) {
+		//WATCH: Might not be exactly comparable
+		if (unlikely(time.tv_sec > adapter->missing_tx_timeout)) {
 
 			if (!tx_buf->print_once)
 				ena_trace(ENA_WARNING, "Found a Tx that wasn't "
@@ -3760,7 +3762,7 @@ ena_attach(device_t pdev)
 		goto err_bus_free;
 	}
 
-	adapter->keep_alive_timestamp = getsbinuptime();
+	getmicrouptime(&adapter->keep_alive_timestamp);
 
 	adapter->tx_offload_cap = get_feat_ctx.offload.tx;
 
