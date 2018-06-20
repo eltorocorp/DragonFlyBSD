@@ -264,8 +264,6 @@ struct ena_ring {
 	};
 	int ring_size; /* number of tx/rx_buffer_info's entries */
 
-	struct buf_ring *br; /* only for TX */
-
 	struct lock ring_lock;
 	char lock_name[16];
 

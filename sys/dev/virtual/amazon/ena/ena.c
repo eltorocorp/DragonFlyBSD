@@ -38,7 +38,6 @@
 #include <sys/kthread.h>
 #include <sys/malloc.h>
 #include <sys/mbuf.h>
-#include <sys/buf_ring.h>
 #include <sys/module.h>
 #include <sys/rman.h>
 #include <sys/socket.h>
@@ -433,10 +432,6 @@ ena_init_io_rings(struct ena_adapter *adapter)
 		txr->tx_mem_queue_type = ena_dev->tx_mem_queue_type;
 		txr->smoothed_interval =
 		    ena_com_get_nonadaptive_moderation_interval_tx(ena_dev);
-
-		/* Allocate a buf ring */
-		txr->br = buf_ring_alloc(ena_buf_ring_size, M_DEVBUF,
-		    M_WAITOK, &txr->ring_lock);
 
 #if 0 /* XXX swildner counters */
 		/* Alloc TX statistics. */
@@ -2578,7 +2573,7 @@ ena_setup_ifnet(device_t pdev, struct ena_adapter *adapter,
 	ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST;
 
 	ifp->if_init = ena_init;
-	ifp->if_transmit = ena_mq_start;
+	ifp->start = ena_start_xmit;
 	ifp->if_qflush = ena_qflush;
 	ifp->if_ioctl = ena_ioctl;
 #if 0 /* XXX swildner counter */
@@ -2902,8 +2897,10 @@ dma_error:
 }
 
 static void
-ena_start_xmit(struct ena_ring *tx_ring)
+ena_start_xmit(struct ifnet *ifp, struct ifaltq_subque *ifsq)
 {
+
+	//Might need to initialize an ena_ring with the ifaltq_subque in it
 	struct mbuf *mbuf;
 	struct ena_adapter *adapter = tx_ring->adapter;
 	struct ena_com_io_sq* io_sq;
@@ -2918,26 +2915,30 @@ ena_start_xmit(struct ena_ring *tx_ring)
 		return
 
 	ena_qid = ENA_IO_TXQ_IDX(tx_ring->que->id);
+	//What is io_sq?
 	io_sq = &adapter->ena_dev->io_sq_queues[ena_qid];
 
-	// TODO: Clear out use of buf_ring (br)
-
+	//while ifsq is not empty
 	while ((mbuf = buf_ring_peek_clear_sc(tx_ring->br)) != NULL) {
 		ena_trace(ENA_DBG | ENA_TXPTH, "\ndequeued mbuf %p with flags %#x and"
 		    " header csum flags %#jx",
 		    mbuf, mbuf->m_flags, (uint64_t)mbuf->m_pkthdr.csum_flags);
 
+		//ena_tx_cleanup will need to be modified to work with the new queue
 		if (unlikely(!ena_com_sq_have_enough_space(io_sq,
 		    ENA_TX_CLEANUP_THRESHOLD)))
 			ena_tx_cleanup(tx_ring);
 
 		if (unlikely((ret = ena_xmit_mbuf(tx_ring, &mbuf)) != 0)) {
 			if (ret == ENA_COM_NO_MEM) {
+				//might be able to prepend the mbuf if it doesn't work
 				buf_ring_putback_sc(tx_ring->br, mbuf);
 			} else if (ret == ENA_COM_NO_SPACE) {
 				buf_ring_putback_sc(tx_ring->br, mbuf);
 			} else {
+				//ensure this is the correct free function
 				m_freem(mbuf);
+				//advance might already be a part of the dequeue process
 				buf_ring_advance_sc(tx_ring->br);
 			}
 
@@ -3022,13 +3023,14 @@ ena_mq_start(if_t ifp, struct mbuf *m)
 
 	/* Check if drbr is empty before putting packet */
 	is_drbr_empty = buf_ring_empty(tx_ring->br);
-	//TODO: enqueue might have to be reworked
-	ret = buf_ring_enqueue_manager(tx_ring->br, m);
+	ret = buf_ring_enqueue(tx_ring->br, m);
+	//if cannot enqueue mbuf, defer the start of xmit
 	if (unlikely(ret != 0)) {
 		taskqueue_enqueue(tx_ring->enqueue_tq, &tx_ring->enqueue_task);
 		return (ret);
 	}
 
+	//if bufring is empty and lock can be obtained, start xmit
 	if ((is_drbr_empty != 0) && (ENA_RING_MTX_TRYLOCK(tx_ring) != 0)) {
 		ena_start_xmit(tx_ring);
 		ENA_RING_MTX_UNLOCK(tx_ring);
