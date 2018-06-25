@@ -158,8 +158,6 @@ static int	ena_check_and_collapse_mbuf(struct ena_ring *tx_ring,
     struct mbuf **mbuf);
 static int	ena_xmit_mbuf(struct ena_ring *, struct mbuf **);
 static void	ena_start_xmit(struct ifnet *, struct ifaltq_subque *);
-static int	ena_mq_start(if_t, struct mbuf *);
-static void	ena_deferred_mq_start(void *, int);
 static int	ena_calc_io_queue_num(struct ena_adapter *,
     struct ena_com_dev_get_features_ctx *);
 static int	ena_calc_queue_size(struct ena_adapter *, uint16_t *,
@@ -607,17 +605,6 @@ ena_setup_tx_resources(struct ena_adapter *adapter, int qid)
 			     "Unable to create Tx DMA map for buffer %d\n", i);
 			goto err_buf_info_unmap;
 		}
-	}
-
-	/* Allocate taskqueues */
-	TASK_INIT(&tx_ring->enqueue_task, 0, ena_deferred_mq_start, tx_ring);
-	tx_ring->enqueue_tq = taskqueue_create("ena_tx_enque", M_NOWAIT,
-	    taskqueue_thread_enqueue, &tx_ring->enqueue_tq);
-	if (unlikely(tx_ring->enqueue_tq == NULL)) {
-		ena_trace(ENA_ALERT,
-		    "Unable to create taskqueue for enqueue task\n");
-		i = tx_ring->ring_size;
-		goto err_buf_info_unmap;
 	}
 
 	/* RSS set cpu for thread */
@@ -1394,7 +1381,7 @@ ena_tx_cleanup(struct ena_ring *tx_ring)
 	}
 
 	//Not sure what task this is queueing
-	taskqueue_enqueue(tx_ring->enqueue_tq, &tx_ring->enqueue_task);
+	//taskqueue_enqueue(tx_ring->enqueue_tq, &tx_ring->enqueue_task);
 
 	return (work_done);
 }
@@ -2883,7 +2870,6 @@ ena_start_xmit(struct ifnet *ifp, struct ifaltq_subque *ifsq)
 {
 
 	//Might need to initialize an ena_ring with the ifaltq_subque in it
-	struct mbuf *mbuf;
 	struct ena_adapter *adapter = ifp->if_softc;
 	struct ena_com_io_sq* io_sq;
 	int ena_qid;
@@ -2895,14 +2881,10 @@ ena_start_xmit(struct ifnet *ifp, struct ifaltq_subque *ifsq)
 
 	//Check is link_active and some other shit. If it is, purge.
 
-
-
 	/*
 	if (unlikely(!adapter->link_status))
 		return
 	*/
-
-	//What is io_sq?
 
 	while (!ifsq_is_empty(ifsq)) {
 		struct mbuf *m_head;
@@ -2920,6 +2902,8 @@ ena_start_xmit(struct ifnet *ifp, struct ifaltq_subque *ifsq)
 		tx_ring = &adapter->tx_ring[i];
 		ena_qid = ENA_IO_TXQ_IDX(tx_ring->que->id);
 		io_sq = &adapter->ena_dev->io_sq_queues[ena_qid];
+
+		ENA_RING_MTX_LOCK(tx_ring);
 
 		if (unlikely(!ena_com_sq_have_enough_space(io_sq, ENA_TX_CLEANUP_THRESHOLD)))
 			ena_tx_cleanup(tx_ring);
@@ -2944,7 +2928,7 @@ ena_start_xmit(struct ifnet *ifp, struct ifaltq_subque *ifsq)
 
 		acum_pkts++;
 
-		BPF_MTAP(adapter->ifp, mbuf);
+		BPF_MTAP(adapter->ifp, m_head);
 
 		if (unlikely(acum_pkts == DB_THRESHOLD)) {
 			acum_pkts = 0;
@@ -2953,32 +2937,18 @@ ena_start_xmit(struct ifnet *ifp, struct ifaltq_subque *ifsq)
 			ena_com_write_sq_doorbell(io_sq);
 		}
 
+		ENA_RING_MTX_UNLOCK(tx_ring);
 	}
 
+	/* NOT SURE WHAT TO DO WITH THIS CODE EITHER
 	if (likely(acum_pkts != 0)) {
 		wmb();
-		/* Trigger the dma engine */
+		// Trigger the dma engine
 		ena_com_write_sq_doorbell(io_sq);
 	}
 
 	if (!ena_com_sq_have_enough_space(io_sq, ENA_TX_CLEANUP_THRESHOLD))
-		ena_tx_cleanup(tx_ring);
-}
-
-static void
-ena_deferred_mq_start(void *arg, int pending)
-{
-	struct ena_ring *tx_ring = (struct ena_ring *)arg;
-	struct ifnet *ifp = tx_ring->adapter->ifp;
-
-	// TODO: Use of buf_ring
-
-	while (!buf_ring_empty(tx_ring->br) &&
-	    (ifp->if_flags & IFF_RUNNING) != 0) {
-		ENA_RING_MTX_LOCK(tx_ring);
-		ena_start_xmit(tx_ring);
-		ENA_RING_MTX_UNLOCK(tx_ring);
-	}
+		ena_tx_cleanup(tx_ring); */
 }
 
 static int
