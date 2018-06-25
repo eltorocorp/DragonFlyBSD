@@ -160,7 +160,6 @@ static int	ena_xmit_mbuf(struct ena_ring *, struct mbuf **);
 static void	ena_start_xmit(struct ena_ring *);
 static int	ena_mq_start(if_t, struct mbuf *);
 static void	ena_deferred_mq_start(void *, int);
-static void	ena_qflush(if_t);
 static int	ena_calc_io_queue_num(struct ena_adapter *,
     struct ena_com_dev_get_features_ctx *);
 static int	ena_calc_queue_size(struct ena_adapter *, uint16_t *,
@@ -599,11 +598,6 @@ ena_setup_tx_resources(struct ena_adapter *adapter, int qid)
 	tx_ring->next_to_use = 0;
 	tx_ring->next_to_clean = 0;
 
-	ENA_RING_MTX_LOCK(tx_ring);
-	//TODO: drbr_flush will need to be rewritten
-	buf_ring_flush(tx_ring->br);
-	ENA_RING_MTX_UNLOCK(tx_ring);
-
 	/* ... and create the buffer DMA maps */
 	for (i = 0; i < tx_ring->ring_size; i++) {
 		err = bus_dmamap_create(adapter->tx_buf_tag, 0,
@@ -672,8 +666,6 @@ ena_free_tx_resources(struct ena_adapter *adapter, int qid)
 	taskqueue_free(tx_ring->enqueue_tq);
 
 	ENA_RING_MTX_LOCK(tx_ring);
-	/* Flush buffer ring, */
-	buf_ring_flush(tx_ring->br);
 
 	/* Free buffer DMA maps, */
 	for (int i = 0; i < tx_ring->ring_size; i++) {
@@ -2564,7 +2556,6 @@ ena_setup_ifnet(device_t pdev, struct ena_adapter *adapter,
 
 	ifp->if_init = ena_init;
 	ifp->start = ena_start_xmit;
-	ifp->if_qflush = ena_qflush;
 	ifp->if_ioctl = ena_ioctl;
 #if 0 /* XXX swildner counter */
 	if_setgetcounterfn(ifp, ena_get_counter);
@@ -2991,24 +2982,6 @@ ena_deferred_mq_start(void *arg, int pending)
 		ena_start_xmit(tx_ring);
 		ENA_RING_MTX_UNLOCK(tx_ring);
 	}
-}
-
-static void
-ena_qflush(if_t ifp)
-{
-	struct ena_adapter *adapter = ifp->if_softc;
-	struct ena_ring *tx_ring = adapter->tx_ring;
-	int i;
-
-	for(i = 0; i < adapter->num_queues; ++i, ++tx_ring)
-		if (!buf_ring_empty(tx_ring->br)) {
-			ENA_RING_MTX_LOCK(tx_ring);
-			//TODO: flush needs to be reworked
-			buf_ring_flush(tx_ring->br);
-			ENA_RING_MTX_UNLOCK(tx_ring);
-		}
-
-	if_qflush(ifp);
 }
 
 static int
