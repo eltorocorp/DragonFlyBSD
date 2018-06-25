@@ -1412,6 +1412,7 @@ ena_tx_cleanup(struct ena_ring *tx_ring)
 		ena_com_update_dev_comp_head(io_cq);
 	}
 
+	//Not sure what task this is queueing
 	taskqueue_enqueue(tx_ring->enqueue_tq, &tx_ring->enqueue_task);
 
 	return (work_done);
@@ -2777,7 +2778,7 @@ ena_check_and_collapse_mbuf(struct ena_ring *tx_ring, struct mbuf **mbuf)
 }
 
 static int
-ena_xmit_mbuf(struct ena_ring *tx_ring, struct mbuf **mbuf)
+ena_xmit_mbuf(struct ena_ring *tx_ring, struct mbuf *mbuf)
 {
 	struct ena_adapter *adapter;
 	struct ena_tx_buffer *tx_info;
@@ -2799,7 +2800,8 @@ ena_xmit_mbuf(struct ena_ring *tx_ring, struct mbuf **mbuf)
 	adapter = tx_ring->que->adapter;
 	ena_dev = adapter->ena_dev;
 	io_sq = &ena_dev->io_sq_queues[ena_qid];
-
+	
+	//tx_ring is just used to grab the adapter
 	rc = ena_check_and_collapse_mbuf(tx_ring, mbuf);
 	if (unlikely(rc != 0)) {
 		ena_trace(ENA_WARNING,
@@ -2901,52 +2903,65 @@ ena_start_xmit(struct ifnet *ifp, struct ifaltq_subque *ifsq)
 {
 
 	//Might need to initialize an ena_ring with the ifaltq_subque in it
-	struct mbuf *mbuf;
-	struct ena_adapter *adapter = tx_ring->adapter;
+	struct mbuf *mbuf;,
+	struct ena_adapter *adapter = ifp->adapter;
 	struct ena_com_io_sq* io_sq;
 	int ena_qid;
 	int acum_pkts = 0;
 	int ret = 0;
 
-	if (unlikely((adapter->ifp->if_flags & IFF_RUNNING) == 0))
+	if (unlikely((adapter->ifp->if_flags & IFF_RUNNING) == 0) || ifsq_is_oactive(ifsq))
 		return;
 
+	//Check is link_active and some other shit. If it is, purge.
+
+
+
+	/*
 	if (unlikely(!adapter->link_status))
 		return
+	*/
 
-	ena_qid = ENA_IO_TXQ_IDX(tx_ring->que->id);
 	//What is io_sq?
-	io_sq = &adapter->ena_dev->io_sq_queues[ena_qid];
 
-	//while ifsq is not empty
-	while ((mbuf = buf_ring_peek_clear_sc(tx_ring->br)) != NULL) {
-		ena_trace(ENA_DBG | ENA_TXPTH, "\ndequeued mbuf %p with flags %#x and"
-		    " header csum flags %#jx",
-		    mbuf, mbuf->m_flags, (uint64_t)mbuf->m_pkthdr.csum_flags);
+	while (!ifsq_is_empty(ifsq)) {,
+		struct mbuf *m_head;
+		struct ena_ring *tx_ring;
 
-		//ena_tx_cleanup will need to be modified to work with the new queue
-		if (unlikely(!ena_com_sq_have_enough_space(io_sq,
-		    ENA_TX_CLEANUP_THRESHOLD)))
+		//Grab head from mbuf list
+		m_head = ifsq_dequeue(ifsq);
+		if (m_head == NULL)
+			break;
+
+		//pick the associated tx_ring based on hash or curcpu
+		if (m_head->m_pkthdr.hash != 0) {
+			i = m_head->m_pkthdr.hash % adapter->num_queues;
+		} else {
+			i = curcpu % adapter->num_queues;
+		}
+
+		tx_ring = &adapter->tx_ring[i];
+		ena_qid = ENA_IO_TXQ_IDX(tx_ring->que->id);
+		io_sq = &adapter->ena_dev->io_sq_queues[ena_qid];
+
+		if (unlikely(!ena_com_sq_have_enough_space(io_sq, ENA_TX_CLEANUP_THRESHOLD)))
 			ena_tx_cleanup(tx_ring);
 
 		if (unlikely((ret = ena_xmit_mbuf(tx_ring, &mbuf)) != 0)) {
 			if (ret == ENA_COM_NO_MEM) {
-				//might be able to prepend the mbuf if it doesn't work
-				buf_ring_putback_sc(tx_ring->br, mbuf);
+				//put mbuf back on queue
 			} else if (ret == ENA_COM_NO_SPACE) {
-				buf_ring_putback_sc(tx_ring->br, mbuf);
+				//put mbuf back on queue
 			} else {
-				//ensure this is the correct free function
 				m_freem(mbuf);
-				//advance might already be a part of the dequeue process
-				buf_ring_advance_sc(tx_ring->br);
+				//advance mbuf queue aka move it forward?
 			}
-
 			break;
 		}
 
-		buf_ring_advance_sc(tx_ring->br);
-
+		//advance mbuf queue, might already be handled by dequeue
+		
+		// NOT SURE WHAT TO DO WITH THIS CODE
 		if (unlikely((adapter->ifp->if_flags & IFF_RUNNING) == 0))
 			return;
 
@@ -2957,11 +2972,8 @@ ena_start_xmit(struct ifnet *ifp, struct ifaltq_subque *ifsq)
 		if (unlikely(acum_pkts == DB_THRESHOLD)) {
 			acum_pkts = 0;
 			wmb();
-			/* Trigger the dma engine */
+			// Trigger the dma engine
 			ena_com_write_sq_doorbell(io_sq);
-#if 0 /* XXX swildner counters */
-			counter_u64_add(tx_ring->tx_stats.doorbells, 1);
-#endif
 		}
 
 	}
@@ -2970,9 +2982,6 @@ ena_start_xmit(struct ifnet *ifp, struct ifaltq_subque *ifsq)
 		wmb();
 		/* Trigger the dma engine */
 		ena_com_write_sq_doorbell(io_sq);
-#if 0 /* XXX swildner counters */
-		counter_u64_add(tx_ring->tx_stats.doorbells, 1);
-#endif
 	}
 
 	if (!ena_com_sq_have_enough_space(io_sq, ENA_TX_CLEANUP_THRESHOLD))
@@ -3013,13 +3022,6 @@ ena_mq_start(if_t ifp, struct mbuf *m)
 	 * It should improve performance.
 	 */
 	//if (M_HASHTYPE_GET(m) != M_HASHTYPE_NONE) {
-	if (m->m_pkthdr.hash != 0) {
-		//i = m->m_pkthdr.flowid % adapter->num_queues;
-		i = m->m_pkthdr.hash % adapter->num_queues;
-	} else {
-		i = curcpu % adapter->num_queues;
-	}
-	tx_ring = &adapter->tx_ring[i];
 
 	/* Check if drbr is empty before putting packet */
 	is_drbr_empty = buf_ring_empty(tx_ring->br);
@@ -3030,7 +3032,7 @@ ena_mq_start(if_t ifp, struct mbuf *m)
 		return (ret);
 	}
 
-	//if bufring is empty and lock can be obtained, start xmit
+	//if bufring is empty and lock can be obtained, start xmit, else defer xmit
 	if ((is_drbr_empty != 0) && (ENA_RING_MTX_TRYLOCK(tx_ring) != 0)) {
 		ena_start_xmit(tx_ring);
 		ENA_RING_MTX_UNLOCK(tx_ring);
