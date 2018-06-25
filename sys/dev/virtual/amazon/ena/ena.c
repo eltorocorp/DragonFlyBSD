@@ -48,7 +48,6 @@
 #include <sys/eventhandler.h>
 
 #include <net/bpf.h>
-#include <net/ethernet.h>
 #include <net/if.h>
 #include <net/if_var.h>
 #include <net/if_arp.h>
@@ -56,6 +55,7 @@
 #include <net/if_media.h>
 #include <net/if_types.h>
 #include <net/ifq_var.h>
+#include <net/vlan/if_vlan_var.h>
 
 #include <netinet/in_systm.h>
 #include <netinet/in.h>
@@ -157,7 +157,7 @@ static void	ena_tx_csum(struct ena_com_tx_ctx *, struct mbuf *);
 static int	ena_check_and_collapse_mbuf(struct ena_ring *tx_ring,
     struct mbuf **mbuf);
 static int	ena_xmit_mbuf(struct ena_ring *, struct mbuf **);
-static void	ena_start_xmit(struct ena_ring *);
+static void	ena_start_xmit(struct ifnet *, struct ifaltq_subque *);
 static int	ena_mq_start(if_t, struct mbuf *);
 static void	ena_deferred_mq_start(void *, int);
 static int	ena_calc_io_queue_num(struct ena_adapter *,
@@ -2557,7 +2557,7 @@ ena_setup_ifnet(device_t pdev, struct ena_adapter *adapter,
 	ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST;
 
 	ifp->if_init = ena_init;
-	ifp->start = ena_start_xmit;
+	ifp->if_start = ena_start_xmit;
 	ifp->if_ioctl = ena_ioctl;
 #if 0 /* XXX swildner counter */
 	if_setgetcounterfn(ifp, ena_get_counter);
