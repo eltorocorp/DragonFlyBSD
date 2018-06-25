@@ -2760,7 +2760,7 @@ ena_check_and_collapse_mbuf(struct ena_ring *tx_ring, struct mbuf **mbuf)
 }
 
 static int
-ena_xmit_mbuf(struct ena_ring *tx_ring, struct mbuf *mbuf)
+ena_xmit_mbuf(struct ena_ring *tx_ring, struct mbuf **mbuf)
 {
 	struct ena_adapter *adapter;
 	struct ena_tx_buffer *tx_info;
@@ -2885,7 +2885,7 @@ ena_start_xmit(struct ifnet *ifp, struct ifaltq_subque *ifsq)
 {
 
 	//Might need to initialize an ena_ring with the ifaltq_subque in it
-	struct mbuf *mbuf;,
+	struct mbuf *mbuf;
 	struct ena_adapter *adapter = ifp->adapter;
 	struct ena_com_io_sq* io_sq;
 	int ena_qid;
@@ -2929,13 +2929,13 @@ ena_start_xmit(struct ifnet *ifp, struct ifaltq_subque *ifsq)
 		if (unlikely(!ena_com_sq_have_enough_space(io_sq, ENA_TX_CLEANUP_THRESHOLD)))
 			ena_tx_cleanup(tx_ring);
 
-		if (unlikely((ret = ena_xmit_mbuf(tx_ring, &mbuf)) != 0)) {
+		if (unlikely((ret = ena_xmit_mbuf(tx_ring, &m_head)) != 0)) {
 			if (ret == ENA_COM_NO_MEM) {
 				//put mbuf back on queue
 			} else if (ret == ENA_COM_NO_SPACE) {
 				//put mbuf back on queue
 			} else {
-				m_freem(mbuf);
+				m_freem(m_head);
 				//advance mbuf queue aka move it forward?
 			}
 			break;
