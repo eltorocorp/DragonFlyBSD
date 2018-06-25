@@ -478,17 +478,6 @@ ena_free_io_ring_resources(struct ena_adapter *adapter, unsigned int qid)
 	struct ena_ring *txr = &adapter->tx_ring[qid];
 	struct ena_ring *rxr = &adapter->rx_ring[qid];
 
-#if 0 /* XXX swildner counters */
-	ena_free_counters((counter_u64_t *)&txr->tx_stats,
-	    sizeof(txr->tx_stats));
-	ena_free_counters((counter_u64_t *)&rxr->rx_stats,
-	    sizeof(rxr->rx_stats));
-#endif
-
-	ENA_RING_MTX_LOCK(txr);
-	buf_ring_free(txr->br, M_DEVBUF);
-	ENA_RING_MTX_UNLOCK(txr);
-
 	lockuninit(&txr->ring_lock);
 	lockuninit(&rxr->ring_lock);
 }
@@ -3002,45 +2991,6 @@ ena_deferred_mq_start(void *arg, int pending)
 		ena_start_xmit(tx_ring);
 		ENA_RING_MTX_UNLOCK(tx_ring);
 	}
-}
-
-static int
-ena_mq_start(if_t ifp, struct mbuf *m)
-{
-	struct ena_adapter *adapter = ifp->if_softc;
-	struct ena_ring *tx_ring;
-	int ret, is_drbr_empty;
-	uint32_t i;
-
-	if (unlikely((ifp->if_flags & IFF_RUNNING) == 0))
-		return (ENODEV);
-
-	/* Which queue to use */
-	/*
-	 * If everything is setup correctly, it should be the
-	 * same bucket that the current CPU we're on is.
-	 * It should improve performance.
-	 */
-	//if (M_HASHTYPE_GET(m) != M_HASHTYPE_NONE) {
-
-	/* Check if drbr is empty before putting packet */
-	is_drbr_empty = buf_ring_empty(tx_ring->br);
-	ret = buf_ring_enqueue(tx_ring->br, m);
-	//if cannot enqueue mbuf, defer the start of xmit
-	if (unlikely(ret != 0)) {
-		taskqueue_enqueue(tx_ring->enqueue_tq, &tx_ring->enqueue_task);
-		return (ret);
-	}
-
-	//if bufring is empty and lock can be obtained, start xmit, else defer xmit
-	if ((is_drbr_empty != 0) && (ENA_RING_MTX_TRYLOCK(tx_ring) != 0)) {
-		ena_start_xmit(tx_ring);
-		ENA_RING_MTX_UNLOCK(tx_ring);
-	} else {
-		taskqueue_enqueue(tx_ring->enqueue_tq, &tx_ring->enqueue_task);
-	}
-
-	return (0);
 }
 
 static void
