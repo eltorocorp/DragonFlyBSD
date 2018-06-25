@@ -2886,7 +2886,7 @@ ena_start_xmit(struct ifnet *ifp, struct ifaltq_subque *ifsq)
 
 	//Might need to initialize an ena_ring with the ifaltq_subque in it
 	struct mbuf *mbuf;
-	struct ena_adapter *adapter = ifp->adapter;
+	struct ena_adapter *adapter = ifp->if_softc;
 	struct ena_com_io_sq* io_sq;
 	int ena_qid;
 	int acum_pkts = 0;
@@ -2906,21 +2906,18 @@ ena_start_xmit(struct ifnet *ifp, struct ifaltq_subque *ifsq)
 
 	//What is io_sq?
 
-	while (!ifsq_is_empty(ifsq)) {,
+	while (!ifsq_is_empty(ifsq)) {
 		struct mbuf *m_head;
 		struct ena_ring *tx_ring;
+		int i;
 
 		//Grab head from mbuf list
 		m_head = ifsq_dequeue(ifsq);
 		if (m_head == NULL)
 			break;
 
-		//pick the associated tx_ring based on hash or curcpu
-		if (m_head->m_pkthdr.hash != 0) {
-			i = m_head->m_pkthdr.hash % adapter->num_queues;
-		} else {
-			i = curcpu % adapter->num_queues;
-		}
+		//pick the associated tx_ring based on hash
+		i = m_head->m_pkthdr.hash % adapter->num_queues;
 
 		tx_ring = &adapter->tx_ring[i];
 		ena_qid = ENA_IO_TXQ_IDX(tx_ring->que->id);
