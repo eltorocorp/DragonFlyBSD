@@ -67,7 +67,7 @@ struct timezone {
 #define	DST_EET		5	/* Eastern European dst */
 #define	DST_CAN		6	/* Canada */
 
-#if __BSD_VISIBLE
+#ifdef _KERNEL
 struct bintime {
 	time_t	sec;
 	uint64_t frac;
@@ -302,9 +302,6 @@ tvtosbt(struct timeval _tv)
 
 	return (((sbintime_t)_tv.tv_sec << 32) + ustosbt(_tv.tv_usec));
 }
-#endif /* __BSD_VISIBLE */
-
-#ifdef _KERNEL
 
 /* Operations on timespecs */
 #define	timespecclear(tvp)	((tvp)->tv_sec = (tvp)->tv_nsec = 0)
