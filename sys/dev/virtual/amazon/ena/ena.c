@@ -501,7 +501,7 @@ ena_setup_tx_dma_tag(struct ena_adapter *adapter)
 	    BUS_SPACE_MAXADDR, 			  /* highaddr of excl window */
 	    NULL, NULL,				  /* filter, filterarg 	     */
 	    ENA_TSO_MAXSIZE,			  /* maxsize 		     */
-	    adapter->max_tx_sgl_size - 1,	  /* nsegments 		     */
+	    ENA_BUS_DMA_SEGS,			  /* nsegments		     */
 	    ENA_TSO_MAXSIZE,			  /* maxsegsize 	     */
 	    0,					  /* flags 		     */
 	    &adapter->tx_buf_tag);
@@ -607,6 +607,18 @@ ena_setup_tx_resources(struct ena_adapter *adapter, int qid)
 		}
 	}
 
+#if 0
+	/* Allocate taskqueues */
+	TASK_INIT(&tx_ring->enqueue_task, 0, ena_deferred_mq_start, tx_ring);
+	tx_ring->enqueue_tq = taskqueue_create("ena_tx_enque", M_NOWAIT,
+		taskqueue_thread_enqueue, &tx_ring->enqueue_tq);
+	if (unlikely(tx_ring->enqueue_tq == NULL)) {
+		ena_trace(ENA_ALERT,
+			  "Unable to create taskqueue for enqueue task\n");
+		i = tx_ring->ring_size;
+		goto err_buf_info_unmap;
+	}
+
 	/* RSS set cpu for thread */
 #ifdef RSS
 	CPU_SETOF(que->cpu, &cpu_mask);
@@ -617,6 +629,7 @@ ena_setup_tx_resources(struct ena_adapter *adapter, int qid)
 	taskqueue_start_threads(&tx_ring->enqueue_tq, 1, TDPRI_KERN_DAEMON, -1,
 	    "%s txeq", device_get_nameunit(adapter->pdev));
 #endif /* RSS */
+#endif
 
 	return (0);
 
@@ -646,11 +659,13 @@ ena_free_tx_resources(struct ena_adapter *adapter, int qid)
 {
 	struct ena_ring *tx_ring = &adapter->tx_ring[qid];
 
+#if 0
 	while (taskqueue_cancel(tx_ring->enqueue_tq, &tx_ring->enqueue_task,
 	    NULL))
 		taskqueue_drain(tx_ring->enqueue_tq, &tx_ring->enqueue_task);
 
 	taskqueue_free(tx_ring->enqueue_tq);
+#endif
 
 	ENA_RING_MTX_LOCK(tx_ring);
 
@@ -725,6 +740,7 @@ validate_rx_req_id(struct ena_ring *rx_ring, uint16_t req_id)
 
 	device_printf(rx_ring->adapter->pdev, "Invalid rx req_id: %hu\n",
 	    req_id);
+	IFNET_STAT_INC(rx_ring->adapter->ifp, ierrors, 1);
 #if 0 /* XXX swildner counters */
 	counter_u64_add(rx_ring->rx_stats.bad_req_id, 1);
 #endif
@@ -928,7 +944,7 @@ ena_alloc_rx_mbuf(struct ena_adapter *adapter,
 		return (0);
 
 	/* Get mbuf using UMA allocator */
-	rx_info->mbuf = m_getjcl(M_NOWAIT, MT_DATA, M_PKTHDR, MJUM16BYTES);
+	rx_info->mbuf = m_getjcl(M_NOWAIT, MT_DATA, M_PKTHDR, MJUMPAGESIZE);
 
 	if (unlikely(rx_info->mbuf == NULL)) {
 #if 0 /* XXX swildner counters */
@@ -936,6 +952,7 @@ ena_alloc_rx_mbuf(struct ena_adapter *adapter,
 #endif
 		rx_info->mbuf = m_getcl(M_NOWAIT, MT_DATA, M_PKTHDR);
 		if (unlikely(rx_info->mbuf == NULL)) {
+			IFNET_STAT_INC(rx_ring->adapter->ifp, ierrors, 1);
 #if 0 /* XXX swildner counters */
 			counter_u64_add(rx_ring->rx_stats.mbuf_alloc_fail, 1);
 #endif
@@ -943,7 +960,7 @@ ena_alloc_rx_mbuf(struct ena_adapter *adapter,
 		}
 		mlen = MCLBYTES;
 	} else {
-		mlen = MJUM16BYTES;
+		mlen = MJUMPAGESIZE;
 	}
 	/* Set mbuf length*/
 	rx_info->mbuf->m_pkthdr.len = rx_info->mbuf->m_len = mlen;
@@ -957,6 +974,7 @@ ena_alloc_rx_mbuf(struct ena_adapter *adapter,
 	if (unlikely((error != 0) || (nsegs != 1))) {
 		ena_trace(ENA_WARNING, "failed to map mbuf, error: %d, "
 		    "nsegs: %d\n", error, nsegs);
+		IFNET_STAT_INC(rx_ring->adapter->ifp, ierrors, 1);
 #if 0 /* XXX swildner counters */
 		counter_u64_add(rx_ring->rx_stats.dma_mapping_err, 1);
 #endif
@@ -1049,6 +1067,7 @@ ena_refill_rx_bufs(struct ena_ring *rx_ring, uint32_t num)
 	}
 
 	if (unlikely(i < num)) {
+		IFNET_STAT_INC(rx_ring->adapter->ifp, ierrors, 1);
 #if 0 /* XXX swildner counters */
 		counter_u64_add(rx_ring->rx_stats.refil_partial, 1);
 #endif
@@ -1203,6 +1222,7 @@ validate_tx_req_id(struct ena_ring *tx_ring, uint16_t req_id)
 	else
 		device_printf(adapter->pdev, "Invalid req_id: %hu\n", req_id);
 
+	IFNET_STAT_INC(tx_ring->adapter->ifp, oerrors, 1);
 #if 0 /* XXX swildner counters */
 	counter_u64_add(tx_ring->tx_stats.bad_req_id, 1);
 #endif
@@ -1380,8 +1400,10 @@ ena_tx_cleanup(struct ena_ring *tx_ring)
 		ena_com_update_dev_comp_head(io_cq);
 	}
 
+#if 0
 	//Not sure what task this is queueing
 	//taskqueue_enqueue(tx_ring->enqueue_tq, &tx_ring->enqueue_task);
+#endif
 
 	return (work_done);
 }
@@ -1522,6 +1544,7 @@ ena_rx_mbuf(struct ena_ring *rx_ring, struct ena_com_rx_buf_info *ena_bufs,
 		}
 
 		if (unlikely(m_append(mbuf, len, rx_info->mbuf->m_data) == 0)) {
+			IFNET_STAT_INC(rx_ring->adapter->ifp, ierrors, 1);
 #if 0 /* XXX swildner counters */
 			counter_u64_add(rx_ring->rx_stats.mbuf_alloc_fail, 1);
 #endif
@@ -1559,6 +1582,7 @@ ena_rx_checksum(struct ena_ring *rx_ring, struct ena_com_rx_ctx *ena_rx_ctx,
 	    ena_rx_ctx->l3_csum_err)) {
 		/* ipv4 checksum error */
 		mbuf->m_pkthdr.csum_flags = 0;
+		IFNET_STAT_INC(rx_ring->adapter->ifp, ierrors, 1);
 #if 0 /* XXX swildner counters */
 		counter_u64_add(rx_ring->rx_stats.bad_csum, 1);
 #endif
@@ -1572,6 +1596,7 @@ ena_rx_checksum(struct ena_ring *rx_ring, struct ena_com_rx_ctx *ena_rx_ctx,
 		if (ena_rx_ctx->l4_csum_err) {
 			/* TCP/UDP checksum error */
 			mbuf->m_pkthdr.csum_flags = 0;
+			IFNET_STAT_INC(rx_ring->adapter->ifp, ierrors, 1);
 #if 0 /* XXX swildner counters */
 			counter_u64_add(rx_ring->rx_stats.bad_csum, 1);
 #endif
@@ -1699,9 +1724,12 @@ ena_rx_cleanup(struct ena_ring *rx_ring)
 		if (do_if_input != 0) {
 			ena_trace(ENA_DBG | ENA_RXPTH,
 			    "calling if_input() with mbuf %p", mbuf);
+			ENA_RING_MTX_UNLOCK(rx_ring);
 			(*ifp->if_input)(ifp, mbuf, NULL, -1);
+			ENA_RING_MTX_LOCK(rx_ring);
 		}
 
+		IFNET_STAT_INC(ifp, ipackets, 1);
 #if 0 /* XXX swildner counters */
 		counter_enter();
 		counter_u64_add_protected(rx_ring->rx_stats.cnt, 1);
@@ -1725,6 +1753,7 @@ ena_rx_cleanup(struct ena_ring *rx_ring)
 	return (RX_BUDGET - budget);
 
 error:
+	IFNET_STAT_INC(rx_ring->adapter->ifp, ierrors, 1);
 #if 0 /* XXX swildner counters */
 	counter_u64_add(rx_ring->rx_stats.bad_desc_num, 1);
 #endif
@@ -1785,7 +1814,7 @@ ena_handle_msix(void *arg)
 		 * being executed and rx ring is being cleaned up in
 		 * another thread.
 		 */
-		if (likely(ENA_RING_MTX_TRYLOCK(rx_ring) != 0)) {
+		if (likely(ENA_RING_MTX_TRYLOCK(rx_ring) == 0)) {
 			rxc = ena_rx_cleanup(rx_ring);
 			ENA_RING_MTX_UNLOCK(rx_ring);
 		} else {
@@ -1958,6 +1987,7 @@ err_res_free:
 	    irq->vector);
 	rcc = bus_release_resource(adapter->pdev, SYS_RES_IRQ,
 	    irq->vector, irq->res);
+	pci_release_msix_vector(adapter->pdev, irq->vector);
 	if (unlikely(rcc != 0))
 		device_printf(adapter->pdev, "dev has no parent while "
 		    "releasing res for irq: %d\n", irq->vector);
@@ -2047,6 +2077,7 @@ err:
 		if (irq->res != NULL) {
 			rcc = bus_release_resource(adapter->pdev, SYS_RES_IRQ,
 			    irq->vector, irq->res);
+			pci_release_msix_vector(adapter->pdev, irq->vector);
 		}
 		if (unlikely(rcc != 0))
 			device_printf(adapter->pdev, "dev has no parent while "
@@ -2080,6 +2111,7 @@ ena_free_mgmnt_irq(struct ena_adapter *adapter)
 		    irq->vector);
 		rc = bus_release_resource(adapter->pdev, SYS_RES_IRQ,
 		    irq->vector, irq->res);
+		pci_release_msix_vector(adapter->pdev, irq->vector);
 		irq->res = NULL;
 		if (unlikely(rc != 0))
 			device_printf(adapter->pdev, "dev has no parent while "
@@ -2112,6 +2144,7 @@ ena_free_io_irq(struct ena_adapter *adapter)
 			    irq->vector);
 			rc = bus_release_resource(adapter->pdev, SYS_RES_IRQ,
 			    irq->vector, irq->res);
+			pci_release_msix_vector(adapter->pdev, irq->vector);
 			irq->res = NULL;
 			if (unlikely(rc != 0)) {
 				device_printf(adapter->pdev, "dev has no parent"
@@ -2732,6 +2765,7 @@ ena_check_and_collapse_mbuf(struct ena_ring *tx_ring, struct mbuf **mbuf)
 
 	collapsed_mbuf = m_defrag(*mbuf, M_NOWAIT);
 	if (unlikely(collapsed_mbuf == NULL)) {
+		IFNET_STAT_INC(tx_ring->adapter->ifp, oerrors, 1);
 #if 0 /* XXX swildner counters */
 		counter_u64_add(tx_ring->tx_stats.collapse_err, 1);
 #endif
@@ -2793,11 +2827,12 @@ ena_xmit_mbuf(struct ena_ring *tx_ring, struct mbuf **mbuf)
 	push_hdr = NULL;
 
 	rc = bus_dmamap_load_mbuf_segment(adapter->tx_buf_tag, tx_info->map,
-	    *mbuf, segs, 1, &nsegs, BUS_DMA_NOWAIT);
+	    *mbuf, segs, adapter->max_tx_sgl_size, &nsegs, BUS_DMA_NOWAIT);
 
 	if (unlikely((rc != 0) || (nsegs == 0))) {
 		ena_trace(ENA_WARNING,
 		    "dmamap load failed! err: %d nsegs: %d", rc, nsegs);
+		IFNET_STAT_INC(tx_ring->adapter->ifp, oerrors, 1);
 #if 0 /* XXX swildner counters */
 		counter_u64_add(tx_ring->tx_stats.dma_mapping_err, 1);
 #endif
@@ -2828,12 +2863,14 @@ ena_xmit_mbuf(struct ena_ring *tx_ring, struct mbuf **mbuf)
 	rc = ena_com_prepare_tx(io_sq, &ena_tx_ctx, &nb_hw_desc);
 	if (unlikely(rc != 0)) {
 		device_printf(adapter->pdev, "failed to prepare tx bufs\n");
+		IFNET_STAT_INC(tx_ring->adapter->ifp, oerrors, 1);
 #if 0 /* XXX swildner counters */
 		counter_u64_add(tx_ring->tx_stats.prepare_ctx_err, 1);
 #endif
 		goto dma_error;
 	}
 
+	IFNET_STAT_INC(tx_ring->adapter->ifp, opackets, 1);
 #if 0 /* XXX swildner counters */
 	counter_enter();
 	counter_u64_add_protected(tx_ring->tx_stats.cnt, 1);
@@ -2871,13 +2908,16 @@ ena_start_xmit(struct ifnet *ifp, struct ifaltq_subque *ifsq)
 
 	//Might need to initialize an ena_ring with the ifaltq_subque in it
 	struct ena_adapter *adapter = ifp->if_softc;
-	struct ena_com_io_sq* io_sq;
+	struct ena_com_io_sq *io_sq;
+	struct ena_ring *tx_ring;
 	int ena_qid;
 	int acum_pkts = 0;
 	int ret = 0;
 
-	if (unlikely((adapter->ifp->if_flags & IFF_RUNNING) == 0) || ifsq_is_oactive(ifsq))
+	if (unlikely((adapter->ifp->if_flags & IFF_RUNNING) == 0) ||
+	    ifsq_is_oactive(ifsq)) {
 		return;
+	}
 
 	//Check is link_active and some other shit. If it is, purge.
 
@@ -2886,9 +2926,11 @@ ena_start_xmit(struct ifnet *ifp, struct ifaltq_subque *ifsq)
 		return
 	*/
 
+	io_sq = NULL;
+	tx_ring = NULL;
+
 	while (!ifsq_is_empty(ifsq)) {
 		struct mbuf *m_head;
-		struct ena_ring *tx_ring;
 		int i;
 
 		//Grab head from mbuf list
@@ -2900,10 +2942,9 @@ ena_start_xmit(struct ifnet *ifp, struct ifaltq_subque *ifsq)
 		i = m_head->m_pkthdr.hash % adapter->num_queues;
 
 		tx_ring = &adapter->tx_ring[i];
+		ENA_RING_MTX_LOCK(tx_ring);
 		ena_qid = ENA_IO_TXQ_IDX(tx_ring->que->id);
 		io_sq = &adapter->ena_dev->io_sq_queues[ena_qid];
-
-		ENA_RING_MTX_LOCK(tx_ring);
 
 		if (unlikely(!ena_com_sq_have_enough_space(io_sq, ENA_TX_CLEANUP_THRESHOLD)))
 			ena_tx_cleanup(tx_ring);
@@ -2917,17 +2958,22 @@ ena_start_xmit(struct ifnet *ifp, struct ifaltq_subque *ifsq)
 				m_freem(m_head);
 				//advance mbuf queue aka move it forward?
 			}
+			ENA_RING_MTX_UNLOCK(tx_ring);
 			break;
 		}
 
 		//advance mbuf queue, might already be handled by dequeue
 		
+#if 0
+		// dillon - wtf is this doing here?
 		// NOT SURE WHAT TO DO WITH THIS CODE
 		if (unlikely((adapter->ifp->if_flags & IFF_RUNNING) == 0))
-			return;
+			return; // break here, not return. tx_ring locked
+#endif
 
 		acum_pkts++;
 
+		ENA_RING_MTX_UNLOCK(tx_ring);
 		BPF_MTAP(adapter->ifp, m_head);
 
 		if (unlikely(acum_pkts == DB_THRESHOLD)) {
@@ -2936,19 +2982,20 @@ ena_start_xmit(struct ifnet *ifp, struct ifaltq_subque *ifsq)
 			// Trigger the dma engine
 			ena_com_write_sq_doorbell(io_sq);
 		}
-
-		ENA_RING_MTX_UNLOCK(tx_ring);
 	}
 
-	/* NOT SURE WHAT TO DO WITH THIS CODE EITHER
 	if (likely(acum_pkts != 0)) {
 		wmb();
 		// Trigger the dma engine
 		ena_com_write_sq_doorbell(io_sq);
 	}
 
-	if (!ena_com_sq_have_enough_space(io_sq, ENA_TX_CLEANUP_THRESHOLD))
-		ena_tx_cleanup(tx_ring); */
+	if (io_sq &&
+	    !ena_com_sq_have_enough_space(io_sq, ENA_TX_CLEANUP_THRESHOLD)) {
+		ENA_RING_MTX_LOCK(tx_ring);
+		ena_tx_cleanup(tx_ring);
+		ENA_RING_MTX_UNLOCK(tx_ring);
+	}
 }
 
 static int
@@ -3271,6 +3318,7 @@ static void ena_keep_alive_wd(void *adapter_data,
 	desc = (struct ena_admin_aenq_keep_alive_desc *)aenq_e;
 
 	rx_drops = ((uint64_t)desc->rx_drops_high << 32) | desc->rx_drops_low;
+	IFNET_STAT_INC(adapter->ifp, iqdrops, 1);
 #if 0 /* XXX swildner counters */
 	counter_u64_zero(adapter->hw_stats.rx_drops);
 	counter_u64_add(adapter->hw_stats.rx_drops, rx_drops);
