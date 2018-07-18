@@ -63,11 +63,19 @@ else
 	_boot="start"
 fi
 
-files=`rcorder -s nostart /etc/rc.d/* 2>/dev/null`
+if ! [ -e ${firstboot_sentinel} ]; then
+	skip_firstboot="-s firstboot"
+fi
+
+files=`rcorder -s nostart ${skip_firstboot} /etc/rc.d/* 2>/dev/null`
 
 for _rc_elem in ${files}; do
 	run_rc_script ${_rc_elem} ${_boot}
 done
+
+if [ -e ${firstboot_sentinel} ]; then
+	rm -rf ${firsboot_sentinel}
+fi
 
 echo ''
 date

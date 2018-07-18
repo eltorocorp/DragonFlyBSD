@@ -54,9 +54,14 @@ locald_start()
 				done
 			fi
 		done
+
+		if ! [ -e ${firstboot_sentinel} ]; then
+			skip_firstboot="-s firstboot"
+		fi
+
 		script_save_sep="$IFS"
 		IFS="${script_name_sep}"
-		sortedslist=`rcorder -s nostart /etc/rc.d/* ${slist} 2>/dev/null | grep -v "^/etc/rc.d/" | tr '\n' "$IFS"`;
+		sortedslist=`rcorder -s nostarta ${skip_firstboot} /etc/rc.d/* ${slist} 2>/dev/null | grep -v "^/etc/rc.d/" | tr '\n' "$IFS"`;
 		for script in ${sortedslist}; do
 			if [ -x "${script}" ]; then
 				(set -T
@@ -66,6 +71,11 @@ locald_start()
 				echo -n " (skipping ${script##*/}, not executable)"
 			fi
 		done
+
+		if [ -e ${firstboot_sentinel} ]; then
+			rm -rf ${firstboot_sentinel}
+		fi
+
 		IFS="${script_save_sep}"
 		echo '.'
 		;;
@@ -94,9 +104,14 @@ locald_stop()
 				done
 			fi
 		done
+
+		if ! [ -e ${firstboot_sentinel} ]; then
+			skip_firstboot="-s firstboot"
+		fi
+
 		script_save_sep="$IFS"
 		IFS="${script_name_sep}"
-		sortedslist=`rcorder -s nostart /etc/rc.d/* ${slist} 2>/dev/null | grep -v "^/etc/rc.d/" | tr '\n' "$IFS"`;
+		sortedslist=`rcorder -s nostart ${skip_firstboot} /etc/rc.d/* ${slist} 2>/dev/null | grep -v "^/etc/rc.d/" | tr '\n' "$IFS"`;
 		for script in `reverse_list ${sortedslist}`; do
 			if [ -x "${script}" ]; then
 				(set -T
